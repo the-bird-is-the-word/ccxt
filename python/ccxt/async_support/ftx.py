@@ -191,7 +191,7 @@ class ftx(Exchange):
                         'subaccounts/update_name',
                         'subaccounts/transfer',
                         # otc
-                        'otc/quotes/{quote_id}/accept',
+                        'otc/quotes/{quoteId}/accept',
                         'otc/quotes',
                         # options
                         'options/requests',
@@ -270,7 +270,6 @@ class ftx(Exchange):
                     'Invalid parameter': BadRequest,  # {"error":"Invalid parameter start_time","success":false}
                     'The requested URL was not found on the server': BadRequest,
                     'No such coin': BadRequest,
-                    'No such future': BadSymbol,
                     'No such market': BadSymbol,
                     'Do not send more than': RateLimitExceeded,
                     'An unexpected error occurred': ExchangeNotAvailable,  # {"error":"An unexpected error occurred, please try again later(58BC21C795).","success":false}
@@ -1106,7 +1105,7 @@ class ftx(Exchange):
             'side': side,  # "buy" or "sell"
             # 'price': 0.306525,  # send null for market orders
             'type': type,  # "limit", "market", "stop", "trailingStop", or "takeProfit"
-            'size': float(self.amount_to_precision(symbol, amount)),
+            'size': str(amount), # TODO ! Check this
             # 'reduceOnly': False,  # optional, default is False
             # 'ioc': False,  # optional, default is False, limit or market orders only
             # 'postOnly': False,  # optional, default is False, limit or market orders only
@@ -1467,6 +1466,8 @@ class ftx(Exchange):
         request = {}
         if marketId is not None:
             request['market'] = marketId
+        if limit is not None:
+            request['limit'] = limit
         if since is not None:
             request['start_time'] = int(since / 1000)
             request['end_time'] = self.seconds()
@@ -1768,7 +1769,7 @@ class ftx(Exchange):
     def sign(self, path, api='public', method='GET', params={}, headers=None, body=None):
         request = '/api/' + self.implode_params(path, params)
         query = self.omit(params, self.extract_params(path))
-        baseUrl = self.implode_hostname(self.urls['api'][api])
+        baseUrl = self.implode_params(self.urls['api'][api], {'hostname': self.hostname})
         url = baseUrl + request
         if method != 'POST':
             if query:
@@ -1809,3 +1810,107 @@ class ftx(Exchange):
             self.throw_exactly_matched_exception(self.exceptions['exact'], error, feedback)
             self.throw_broadly_matched_exception(self.exceptions['broad'], error, feedback)
             raise ExchangeError(feedback)  # unknown message
+
+    async def set_leverage(self, leverage, params={}):
+        # WARNING: THIS WILL INCREASE LIQUIDATION PRICE FOR OPEN ISOLATED LONG POSITIONS
+        # AND DECREASE LIQUIDATION PRICE FOR OPEN ISOLATED SHORT POSITIONS
+        if (leverage < 1) or (leverage > 101):
+            raise BadRequest(self.id + ' leverage should be between 1 and 101')
+        request = {
+            'leverage': leverage,
+        }
+        return await self.privatePostAccountLeverage(self.extend(request, params))
+
+    async def fetch_funding_rates(self, symbols=None, params={}):
+        request = {}
+        if symbols is not None:
+            if len(symbols) == 1:
+                request["future"] = symbols[0]
+        response = await self.publicGetFundingRates(self.extend(request, params))
+        response = self.safe_value(response, 'result', [])
+        result = []
+        for i in range(0, len(response)):
+            entry = response[i]
+            parsed = self.parse_funding_rate(entry)
+            result.append(parsed)
+        ret = self.filter_by_array(result, 'symbol', symbols, indexed=False)
+        return ret
+    
+    def parse_funding_rate(self, info, market=None):
+        #
+        # {
+        # 'future': 'PUNDIX-PERP',
+        #  'rate': '-0.000157',
+        #  'time': '2021-06-28T07:00:00+00:00'
+        #  }
+        #
+        timestamp = self.parse8601(self.safe_string(info, 'time'))
+        symbol = None
+        marketId = self.safe_string(info, 'future')
+        if marketId is not None:
+            if marketId in self.markets_by_id:
+                market = self.markets_by_id[marketId]
+                symbol = market['symbol']
+            else:
+                # support for delisted market ids
+                # https://github.com/ccxt/ccxt/issues/7113
+                symbol = marketId
+        if (symbol is None) and (market is not None):
+            symbol = market['symbol']
+        fundingRate = self.safe_number(info, 'rate')
+        return {
+            'info': info,
+            'symbol': symbol,
+            # 'markPrice': markPrice,
+            # 'indexPrice': indexPrice,
+            # 'interestRate': interestRate,
+            'timestamp': timestamp,
+            'datetime': self.iso8601(timestamp),
+            'fundingRate': fundingRate
+            # 'nextFundingTimestamp': nextFundingTime,
+            # 'nextFundingDatetime': self.iso8601(nextFundingTime),
+        }
+
+    async def fetch_account(self, params={}):
+        request = {}
+        response = await self.privateGetAccount(self.extend(request, params))
+        response = self.safe_value(response, 'result', {})
+        return response
+
+    async def fetch_futures(self, params={}):
+        request = {}
+        response = await self.publicGetFutures(self.extend(request, params))
+        return self.safe_value(response, 'result', {})
+
+    async def fetch_futures_stats(self, symbol, params={}):
+        request = {
+            'future_name': symbol,
+        }
+        response = await self.publicGetFuturesFutureNameStats(self.extend(request, params))
+        ret = self.safe_value(response, 'result', {})
+        ret["nextFundingRate"] = self.safe_number(ret, 'nextFundingRate')
+        return ret
+
+    async def fetch_funding_payments(self, params={}):
+        request = {}
+        response = await self.privateGetFundingPayments(self.extend(request, params))
+        return self.safe_value(response, 'result', {})
+
+    async def otc_quote(self, params={}):
+        request = {}
+        response = await self.privatePostOtcQuotes(self.extend(request, params))
+        return self.safe_value(response, 'result', {})
+
+    async def otc_quote_by_id(self, quote_id):
+        request = {
+            'quoteId': quote_id,
+        }
+        response = await self.privateGetOtcQuotesQuoteId(request)
+        return self.safe_value(response, 'result', {})
+    
+    async def otc_quote_accept(self, quote_id):
+        request = {
+            'quoteId': quote_id,
+        }
+        response = await self.privatePostOtcQuotesQuoteIdAccept(request)
+        return response # Return the success field!

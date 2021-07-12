@@ -4,7 +4,7 @@
 
 # -----------------------------------------------------------------------------
 
-__version__ = '1.52.83'
+__version__ = '1.51.88'
 
 # -----------------------------------------------------------------------------
 
@@ -169,6 +169,7 @@ class Exchange(object):
     walletAddress = ''  # the wallet address "0x"-prefixed hexstring
     token = ''  # reserved for HTTP auth in some cases
     twofa = None
+    marketsById = None
     markets_by_id = None
     currencies_by_id = None
     precision = None
@@ -297,7 +298,7 @@ class Exchange(object):
     minFundingAddressLength = 1  # used in check_address
     substituteCommonCurrencyCodes = True
     quoteJsonNumbers = True
-    number = float  # or str (a pointer to a class)
+    number = Decimal  # or str (a pointer to a class)
     # whether fees should be summed by currency code
     reduceFees = True
     lastRestRequestTimestamp = 0
@@ -898,9 +899,6 @@ class Exchange(object):
     def extract_params(string):
         return re.findall(r'{([\w-]+)}', string)
 
-    def implode_hostname(self, url):
-        return Exchange.implode_params(url, {'hostname': self.hostname})
-
     @staticmethod
     def implode_params(string, params):
         if isinstance(params, dict):
@@ -1320,6 +1318,7 @@ class Exchange(object):
             )
         self.markets = self.index_by(values, 'symbol')
         self.markets_by_id = self.index_by(values, 'id')
+        self.marketsById = self.markets_by_id
         self.symbols = sorted(self.markets.keys())
         self.ids = sorted(self.markets_by_id.keys())
         if currencies:
@@ -2004,6 +2003,26 @@ class Exchange(object):
         if self.requiresEddsa and eddsa is None:
             raise NotSupported('Eddsa functionality requires python-axolotl-curve25519, install with `pip install python-axolotl-curve25519==0.4.1.post2`: https://github.com/tgalal/python-axolotl-curve25519')
 
+    @staticmethod
+    def from_wei(amount, decimals=18):
+        if amount is None:
+            return None
+        amount_float = float(amount)
+        exponential = '{:.14e}'.format(amount_float)
+        n, exponent = exponential.split('e')
+        new_exponent = int(exponent) - decimals
+        return float(n + 'e' + str(new_exponent))
+
+    @staticmethod
+    def to_wei(amount, decimals=18):
+        if amount is None:
+            return None
+        amount_float = float(amount)
+        exponential = '{:.14e}'.format(amount_float)
+        n, exponent = exponential.split('e')
+        new_exponent = int(exponent) + decimals
+        return number_to_string(n + 'e' + str(new_exponent))
+
     def privateKeyToAddress(self, privateKey):
         private_key_bytes = base64.b16decode(Exchange.encode(privateKey), True)
         public_key_bytes = ecdsa.SigningKey.from_string(private_key_bytes, curve=ecdsa.SECP256k1).verifying_key.to_string()
@@ -2116,6 +2135,19 @@ class Exchange(object):
     @staticmethod
     def binary_to_base16(s):
         return Exchange.decode(base64.b16encode(s)).lower()
+
+    # python supports arbitrarily big integers
+    @staticmethod
+    def integer_divide(a, b):
+        return int(a) // int(b)
+
+    @staticmethod
+    def integer_pow(a, b):
+        return int(a) ** int(b)
+
+    @staticmethod
+    def integer_modulo(a, b):
+        return int(a) % int(b)
 
     def sleep(self, milliseconds):
         return time.sleep(milliseconds / 1000)
