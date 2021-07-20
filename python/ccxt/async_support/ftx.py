@@ -12,6 +12,7 @@ try:
 except NameError:
     basestring = str  # Python 2
 import hashlib
+import urllib
 from ccxt.base.errors import ExchangeError
 from ccxt.base.errors import AuthenticationError
 from ccxt.base.errors import PermissionDenied
@@ -30,6 +31,10 @@ from ccxt.base.precise import Precise
 
 
 class ftx(Exchange):
+
+    def __init__(self, config={}):
+        super().__init__(config)
+        self.subaccount = None
 
     def describe(self):
         return self.deep_extend(super(ftx, self).describe(), {
@@ -1794,6 +1799,8 @@ class ftx(Exchange):
             headers[keyField] = self.apiKey
             headers[tsField] = timestamp
             headers[signField] = signature
+            if self.subaccount is not None:
+                headers['FTX-SUBACCOUNT'] = urllib.parse.quote(self.subaccount)
         return {'url': url, 'method': method, 'body': body, 'headers': headers}
 
     def handle_errors(self, code, reason, url, method, headers, body, response, requestHeaders, requestBody):
@@ -1914,3 +1921,19 @@ class ftx(Exchange):
         }
         response = await self.privatePostOtcQuotesQuoteIdAccept(request)
         return response # Return the success field!
+
+    async def fetch_subaccount_balance(self, subaccount_name):
+        request = {
+            'nickname': subaccount_name,
+        }
+        response = await self.privateGetSubaccountsNicknameBalances(request)
+
+        balances = self.safe_value(response, 'result', [])
+        for i in range(0, len(balances)):
+            balance = balances[i]
+            code = self.safe_currency_code(self.safe_string(balance, 'coin'))
+            account = self.account()
+            account['free'] = self.safe_string(balance, 'free')
+            account['total'] = self.safe_string(balance, 'total')
+            result[code] = account
+        return self.parse_balance(result, False)
