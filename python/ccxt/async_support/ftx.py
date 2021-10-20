@@ -1937,3 +1937,14 @@ class ftx(Exchange):
             account['total'] = self.safe_string(balance, 'total')
             result[code] = account
         return self.parse_balance(result, False)
+
+    async def subaccount_transfer(self, from_subaccount, to_subaccount, asset, size, params={}):
+        request = {
+            'coin': asset,
+            'size': str(size),
+            'source': from_subaccount,
+            'destination': to_subaccount
+        }
+        response = await self.privatePostSubaccountsTransfer(self.extend(request, params))
+        
+        return response
