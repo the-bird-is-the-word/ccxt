@@ -123,6 +123,7 @@ class ftx(Exchange):
                         'options/historical_open_interest/BTC',
                         # spot margin
                         'spot_margin/history',
+                        'spot_margin/borrow_rates',
                     ],
                 },
                 'private': {
@@ -1948,3 +1949,8 @@ class ftx(Exchange):
         response = await self.privatePostSubaccountsTransfer(self.extend(request, params))
         
         return response
+
+    async def fetch_borrow_rates(self):
+        response = await self.privateGetSpotMarginBorrowRates()
+        return response
+
